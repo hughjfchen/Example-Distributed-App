@@ -1,23 +1,44 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-} -- Allows automatic derivation of e.g. Monad
-{-# LANGUAGE DeriveGeneric              #-} -- Allows Generic, for auto-generation of serialization code
-{-# LANGUAGE TemplateHaskell            #-} -- Allows automatic creation of Lenses for ServerState
+-- Allows Generic, for auto-generation of serialization code
+{-# LANGUAGE DeriveGeneric #-}
+-- Allows automatic derivation of e.g. Monad
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+-- Allows automatic creation of Lenses for ServerState
+{-# LANGUAGE TemplateHaskell #-}
 
-import Control.Distributed.Process.Node (initRemoteTable, runProcess, newLocalNode)
-import Control.Distributed.Process (Process, ProcessId,
-  send, say, expect, getSelfPid, spawnLocal, match, receiveWait)
-import Network.Transport.TCP (createTransport, defaultTCPParameters)
+-- Objects have to be binary to send over the network
+-- For auto-derivation of serialization
+-- For safe serialization
 
-import Data.Binary   (Binary)   -- Objects have to be binary to send over the network
-import GHC.Generics  (Generic)  -- For auto-derivation of serialization
-import Data.Typeable (Typeable) -- For safe serialization
-
-import Control.Monad.RWS.Strict (
-  RWS, MonadReader, MonadWriter, MonadState,
-  ask, tell, execRWS, liftIO)
-import Control.Monad      (replicateM, forever)
 import Control.Concurrent (threadDelay)
-import Control.Lens       (makeLenses, (+=), (%%=))
-import System.Random      (StdGen, Random, randomR, newStdGen)
+import Control.Distributed.Process
+  ( Process,
+    ProcessId,
+    expect,
+    getSelfPid,
+    match,
+    receiveWait,
+    say,
+    send,
+    spawnLocal,
+  )
+import Control.Distributed.Process.Node (initRemoteTable, newLocalNode, runProcess)
+import Control.Lens (makeLenses, (%%=), (+=))
+import Control.Monad (forever, replicateM)
+import Control.Monad.RWS.Strict
+  ( MonadReader,
+    MonadState,
+    MonadWriter,
+    RWS,
+    ask,
+    execRWS,
+    liftIO,
+    tell,
+  )
+import Data.Binary (Binary)
+import Data.Typeable (Typeable)
+import GHC.Generics (Generic)
+import Network.Transport.TCP (createTransport, defaultTCPAddr, defaultTCPParameters)
+import System.Random (Random, StdGen, newStdGen, randomR)
 
 data BingBong = Bing | Bong
   deriving (Show, Generic, Typeable)
@@ -28,20 +49,25 @@ data Message = Message {senderOf :: ProcessId, recipientOf :: ProcessId, msg :: 
 data Tick = Tick deriving (Show, Generic, Typeable)
 
 instance Binary BingBong
+
 instance Binary Message
+
 instance Binary Tick
 
-data ServerState = ServerState {
-  _bingCount :: Int,
-  _bongCount :: Int,
-  _randomGen :: StdGen
-} deriving (Show)
+data ServerState = ServerState
+  { _bingCount :: Int,
+    _bongCount :: Int,
+    _randomGen :: StdGen
+  }
+  deriving (Show)
+
 makeLenses ''ServerState
 
-data ServerConfig = ServerConfig {
-  myId  :: ProcessId,
-  peers :: [ProcessId]
-} deriving (Show)
+data ServerConfig = ServerConfig
+  { myId :: ProcessId,
+    peers :: [ProcessId]
+  }
+  deriving (Show)
 
 newtype ServerAction a = ServerAction {runAction :: RWS ServerConfig [Message] ServerState a}
   deriving (Functor, Applicative, Monad, MonadState ServerState, MonadWriter [Message], MonadReader ServerConfig)
@@ -65,17 +91,19 @@ sendBingBongTo recipient bingbong = do
   ServerConfig myId _ <- ask
   tell [Message myId recipient bingbong]
 
-randomWithin :: Random r => (r,r) -> ServerAction r
+randomWithin :: (Random r) => (r, r) -> ServerAction r
 randomWithin bounds = randomGen %%= randomR bounds
 
 runServer :: ServerConfig -> ServerState -> Process ()
 runServer config state = do
   let run handler msg = return $ execRWS (runAction $ handler msg) config state
-  (state', outputMessages) <- receiveWait [
-    match $ run msgHandler,
-    match $ run tickHandler]
+  (state', outputMessages) <-
+    receiveWait
+      [ match $ run msgHandler,
+        match $ run tickHandler
+      ]
   say $ "Current state: " ++ show state'
-  mapM (\msg -> send (recipientOf msg) msg) outputMessages
+  mapM_ (\msg -> send (recipientOf msg) msg) outputMessages
   runServer config state'
 
 spawnServer :: Process ProcessId
@@ -83,7 +111,7 @@ spawnServer = spawnLocal $ do
   myPid <- getSelfPid
   otherPids <- expect
   spawnLocal $ forever $ do
-    liftIO $ threadDelay (10^6)
+    liftIO $ threadDelay (10 ^ 6)
     send myPid Tick
   randomGen <- liftIO newStdGen
   runServer (ServerConfig myPid otherPids) (ServerState 0 0 randomGen)
@@ -95,7 +123,7 @@ spawnServers count = do
 
 main :: IO String
 main = do
-  Right transport <- createTransport "localhost" "0" defaultTCPParameters
+  Right transport <- createTransport (defaultTCPAddr "localhost" "0") defaultTCPParameters
   backendNode <- newLocalNode transport initRemoteTable
   runProcess backendNode (spawnServers 10)
   putStrLn "Push enter to exit"
