@@ -1,0 +1,4 @@
+cradle:
+  cabal:
+    - path: "."
+      component: "example-distributed-app:exe:Distributed"
