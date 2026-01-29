@@ -36,6 +36,6 @@
       };
     in pkgs.lib.recursiveUpdate flake {
       # Built by `nix build .`
-      packages.default = flake.packages."example-distributed-app:exe:Distributed";
+      packages.default = flake.packages."Distributed:exe:Distributed";
     });
 }
